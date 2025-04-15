@@ -32,8 +32,14 @@ class CMakeExtension(Extension):
 
 class CMakeBuild(build_ext):
     def build_extension(self, ext: CMakeExtension) -> None:
-        ext_fullpath = Path.cwd() / self.get_ext_fullpath(ext.name)
-        extdir = ext_fullpath.parent.resolve()
+        # --- Point CMAKE_LIBRARY_OUTPUT_DIRECTORY to the intermediate build lib dir ---
+        # self.build_lib is set by distutils/setuptools to the build/lib.* path
+        extdir = Path(self.build_lib).resolve()
+        # Ensure the directory exists (CMake might need it)
+        extdir.mkdir(parents=True, exist_ok=True)
+        print(f"--- Setting CMAKE_LIBRARY_OUTPUT_DIRECTORY to: {extdir}")
+        # --- End new calculation ---
+
         debug = int(os.environ.get("DEBUG", 0)) if self.debug is None else self.debug
         cfg = "Debug" if debug else "Release"
         cmake_generator = os.environ.get("CMAKE_GENERATOR", "")
@@ -46,16 +52,22 @@ class CMakeBuild(build_ext):
         # --- Get pybind11 CMake directory ---
         pybind11_cmake_dir = pybind11.get_cmake_dir()
         print(f"--- Found pybind11 CMake dir: {pybind11_cmake_dir}")
-        # --- End pybind11 CMake directory ---
 
+        # --- Define vcpkg path (Optional - uncomment and adjust if using toolchain file) ---
+        # vcpkg_root = "D:/utils/vcpkg/vcpkg" # Use forward slashes
+        # vcpkg_toolchain = f"{vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
+        # print(f"--- Using vcpkg toolchain: {vcpkg_toolchain}")
+        # --- End vcpkg path ---
 
         cmake_args = [
+            # Use the new extdir calculation here
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}{os.sep}",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
             f"-DCMAKE_BUILD_TYPE={cfg}",
-            # --- Add pybind11_DIR definition ---
             f"-Dpybind11_DIR={pybind11_cmake_dir}",
-            # --- End pybind11_DIR definition ---
+            # --- Add vcpkg toolchain file (Optional) ---
+            # f"-DCMAKE_TOOLCHAIN_FILE={vcpkg_toolchain}",
+            # --- End vcpkg toolchain file ---
         ]
         build_args = []
         if "CMAKE_ARGS" in os.environ:
@@ -120,7 +132,9 @@ class CMakeBuild(build_ext):
         print("-" * 10, "CMake Configure Args", "-" * 10)
         # Replace backslashes for better readability in printout, especially on Windows
         cmake_args_str = ' '.join(cmake_args).replace('\\', '/')
-        print(f"cmake {ext.sourcedir.replace('\\','/')} {cmake_args_str}")
+        # Perform replacement *before* the f-string
+        source_dir_str = ext.sourcedir.replace('\\', '/')
+        print(f"cmake {source_dir_str} {cmake_args_str}")
         print("-" * 70)
 
         subprocess.run(
@@ -137,6 +151,9 @@ class CMakeBuild(build_ext):
         print("-" * 70)
 
         subprocess.run(cmake_build_cmd, cwd=build_temp, check=True)
+
+        # Setuptools' build_ext --inplace mechanism will handle the copy
+        # from the CMAKE_LIBRARY_OUTPUT_DIRECTORY (self.build_lib)
 
 
 # Read requirements for install_requires
@@ -157,8 +174,8 @@ except FileNotFoundError:
 
 setup(
     name="implied_vol_cpp_lib", # Package name
-    version="1.0.2", # Increment version
-    author="Your Name", # Update with your name
+    version="1.0.3", # Increment version
+    author="Aryan Gold", # Updated author
     author_email="your.email@example.com", # Update with your email
     description="Fast C++ American option pricing and parallel implied volatility",
     long_description=long_description,
@@ -170,11 +187,11 @@ setup(
     install_requires=install_requires,
     classifiers=[
         "Programming Language :: Python :: 3",
-        "Programming Language :: C++ :: 20",
+        "Programming Language :: C++ :: 17", # Changed back to 17 as 20 caused issues
         "Development Status :: 4 - Beta",
         "Environment :: Win32 (MSWindows)",
         "Environment :: MacOS X",
-        "Environment :: Console", # Indicate it's usable in console environments like MSYS2
+        "Environment :: Console",
         "Operating System :: Microsoft :: Windows",
         "Operating System :: POSIX :: Linux",
         "Operating System :: MacOS :: MacOS X",

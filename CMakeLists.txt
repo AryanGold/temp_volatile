@@ -32,6 +32,20 @@ pybind11_add_module(implied_vol_cpp_lib SHARED
     # brent.hpp and thread_pool.hpp are header-only, no need to list here
 )
 
+# --- Explicitly set output directory property for the target ---
+# CMAKE_LIBRARY_OUTPUT_DIRECTORY should be passed from setup.py and contain the build/lib.* path
+if(CMAKE_LIBRARY_OUTPUT_DIRECTORY)
+    set_target_properties(implied_vol_cpp_lib PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}" # Set both just in case
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}" # And archive for good measure
+    )
+    message(STATUS "Setting target output properties (LIBRARY, RUNTIME, ARCHIVE) to: ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
+else()
+    message(WARNING "CMAKE_LIBRARY_OUTPUT_DIRECTORY not set from setup.py, output location might be default.")
+endif()
+# --- End explicit setting ---
+
 # Target specific properties (optional)
 # target_include_directories(implied_vol_cpp_lib PUBLIC ${pybind11_INCLUDE_DIRS}) # Handled by pybind11_add_module
 target_compile_options(implied_vol_cpp_lib PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHsc /MP> $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -pthread>)

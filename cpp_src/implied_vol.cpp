@@ -268,7 +268,7 @@ double implied_volatility_cpp(
     double vol_lower, double vol_upper, double tol)
 {
     (void)initial_guess;
-    
+
     // Define the objective function for the root finder
     auto objective_func = [&](double sigma) {
         if (sigma <= 0) return std::numeric_limits<double>::max(); // Avoid non-positive sigma
@@ -367,7 +367,7 @@ std::vector<double> vectorized_implied_volatility_cpp(
         // The error message suggests it doesn't, which is strange.
         // --- End check ---
 
-        futures.emplace_back(pool.submit( 
+        futures.emplace_back(pool.submit_task( 
             // Lambda function capturing necessary variables
             [=, &div_times, &div_prop, &div_cash]() -> double {
                 // --- Suppress unused initial_guess warning inside lambda's scope ---
