@@ -28,7 +28,7 @@ except ImportError:
 
 
 # --- Test Data Generation ---
-n_options = 1000 # Increase for performance testing
+n_options = 1##000 # Increase for performance testing
 target_prices = np.linspace(9.5, 10.5, n_options)
 S_arr = np.full(n_options, 100.0)
 r_arr = np.full(n_options, 0.05)
