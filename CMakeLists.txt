@@ -12,13 +12,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF) # Prefer standard C++
 
 # Add optimization flags for release builds
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG") # Common flags for GCC/Clang
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -march=native -flto -ffast-math -funroll-loops -fomit-frame-pointer -DNDEBUG") # Common flags for GCC/Clang
 # Add MSVC specific flags if needed
 if(MSVC)
     # Add specific MSVC flags, e.g. /O2, /DNDEBUG is added by CMake
     # /MP enables parallel builds in MSVC
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2")
+    # Todo: add -Ofast -march=native -flto -ffast-math -funroll-loops -fomit-frame-pointer
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2") 
 endif()
 
 
@@ -27,6 +28,7 @@ endif()
 # <module_name> should match the first argument to PYBIND11_MODULE in bindings.cpp
 # SHARED: creates a shared library (.so or .pyd)
 pybind11_add_module(implied_vol_cpp_lib SHARED
+    cpp_src/ska_pricer.cpp
     cpp_src/implied_vol.cpp
     cpp_src/bindings.cpp
     # brent.hpp and thread_pool.hpp are header-only, no need to list here

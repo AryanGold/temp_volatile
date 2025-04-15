@@ -21,7 +21,7 @@
 
 // --- Helper Function Implementations ---
 
-double compute_fp(double t, double mu,
+double compute_fp_native(double t, double mu,
                   const std::vector<double>& div_times,
                   const std::vector<double>& div_props) {
     double exponent = mu * t;
@@ -54,14 +54,14 @@ double compute_fp(double t, double mu,
 }
 
 
-double compute_DT(double t, double T, double mu,
+double compute_DT_native(double t, double T, double mu,
                   const std::vector<double>& div_times,
                   const std::vector<double>& div_props,
                   const std::vector<double>& div_cash) {
 
     if (T <= 0) return 0.0; // Avoid division by zero if T=0
 
-    double fp_t = compute_fp(t, mu, div_times, div_props);
+    double fp_t = compute_fp_native(t, mu, div_times, div_props);
      if (std::isnan(fp_t) || fp_t == 0.0) { // Check fp_t validity
          // std::cerr << "Warning: compute_fp(" << t << ") returned invalid value in compute_DT." << std::endl;
          // Decide handling: return 0 or NaN? Let's return 0 for the shift.
@@ -85,7 +85,7 @@ double compute_DT(double t, double T, double mu,
         // Let's stick to pricer.cpp logic for now.
         // if (ti <= 0.0) continue;
 
-        double fp_ti = compute_fp(ti, mu, div_times, div_props);
+        double fp_ti = compute_fp_native(ti, mu, div_times, div_props);
 
         // Check fp_ti before division
         if (std::isnan(fp_ti) || fp_ti == 0.0) {
@@ -113,7 +113,7 @@ double compute_DT(double t, double T, double mu,
 // --- Core Option Pricer ---
 
 // --- Helper function for Zero-Volatility Price ---
-// (Moved logic from inside ska_model_option_cpp)
+// (Moved logic from inside ska_model_option_native_cpp)
 double calculate_zero_vol_price(
     double S0, double r, double q, double T, double K,
     const std::string& option_type_str,
@@ -129,14 +129,14 @@ double calculate_zero_vol_price(
      }
 
      double mu_calc = r - q;
-     double fp_maturity = compute_fp(T, mu_calc, div_times, div_prop);
+     double fp_maturity = compute_fp_native(T, mu_calc, div_times, div_prop);
      if (std::isnan(fp_maturity)) return std::numeric_limits<double>::quiet_NaN();
 
      double sum_div_value = 0.0;
      size_t n_div_fwd = div_times.size();
      for (size_t j = 0; j < n_div_fwd; ++j) {
          if (div_times[j] > 0 && div_times[j] <= T) {
-             double fp_j = compute_fp(div_times[j], mu_calc, div_times, div_prop);
+             double fp_j = compute_fp_native(div_times[j], mu_calc, div_times, div_prop);
              if (fp_j != 0.0 && !std::isnan(fp_j)) {
                  sum_div_value += div_cash[j] / fp_j;
              } else {
@@ -160,7 +160,7 @@ double calculate_zero_vol_price(
 }
 
 
-double ska_model_option_cpp(
+double ska_model_option_native_cpp(
     double S0, double r, double q, double sigma, double T, double K,
     const std::string& option_type_str,
     const std::vector<double>& div_times,
@@ -214,7 +214,7 @@ double ska_model_option_cpp(
     std::vector<double> D_t(N + 1, 0.0);
     for (int i = 0; i <= N; ++i) {
         double t_i = static_cast<double>(i) * dt;
-        D_t[i] = compute_DT(t_i, T, mu, div_times, div_prop, div_cash);
+        D_t[i] = compute_DT_native(t_i, T, mu, div_times, div_prop, div_cash);
         if (std::isnan(D_t[i])) { return std::numeric_limits<double>::quiet_NaN(); }
     }
 
@@ -318,7 +318,7 @@ double implied_volatility_cpp(
     (void)initial_guess; // Suppress unused warning
 
     auto objective_func = [&](double sigma) {
-        double model_price = ska_model_option_cpp(S0, r, q, sigma, T, K, option_type,
+        double model_price = ska_model_option_native_cpp(S0, r, q, sigma, T, K, option_type,
                                                   div_times, div_cash, div_prop, N);
 
         #ifdef EXTRA_DEBUGS

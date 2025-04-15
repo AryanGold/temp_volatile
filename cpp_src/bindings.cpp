@@ -2,12 +2,48 @@
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h> // Include if using numpy directly later
 
-#include "implied_vol.hpp" // Include C++ declarations
+// Include C++ declarations
+#include "ska_pricer.hpp"
+#include "implied_vol.hpp" 
 
 namespace py = pybind11;
 
 PYBIND11_MODULE(implied_vol_cpp_lib, m) {
     m.doc() = "High-performance C++ implementation of American option pricing (SKA) and implied volatility calculation";
+
+    /////////////////////////////////////////////////////////////////
+    // SKA stuff
+
+    // Bind the single option pricer (useful for testing)
+    m.def("ska_model_option", &ska_model_option,
+          "Price American option using SKA binomial tree method (C++)",
+          py::arg("S0"), py::arg("r"), py::arg("q"), py::arg("sigma"), py::arg("T"), py::arg("K"),
+          py::arg("option_type"), // expects "c" or "p"
+          py::arg("div_times"), py::arg("div_cash"), py::arg("div_prop"),
+          py::arg("N")
+    );
+
+    // Bind the Synchronous Vectorized Pricer
+    m.def("ska_model_option_sync", &ska_model_option_vectorized_sync,
+          "Price multiple American options sequentially (C++)",
+          py::arg("S0_arr"), py::arg("r_arr"), py::arg("q_arr"), py::arg("sigma_arr"),
+          py::arg("T_arr"), py::arg("K_arr"), py::arg("option_type_arr"),
+          py::arg("div_times"), py::arg("div_cash"), py::arg("div_prop"),
+          py::arg("N")
+    );
+
+    // Bind the Asynchronous (Parallel) Vectorized Pricer
+    m.def("ska_model_option_async", &ska_model_option_vectorized_async,
+          "Price multiple American options in parallel (C++)",
+          py::arg("S0_arr"), py::arg("r_arr"), py::arg("q_arr"), py::arg("sigma_arr"),
+          py::arg("T_arr"), py::arg("K_arr"), py::arg("option_type_arr"),
+          py::arg("div_times"), py::arg("div_cash"), py::arg("div_prop"),
+          py::arg("N")
+    );
+    /////////////////////////////////////////////////////////////////
+
+    /////////////////////////////////////////////////////////////////
+    // Volatility stuff
 
     // Bind the vectorized implied volatility function (existing)
     m.def("vectorized_implied_volatility_parallel",
@@ -19,20 +55,9 @@ PYBIND11_MODULE(implied_vol_cpp_lib, m) {
           py::arg("N"), py::arg("vol_lower") = 1e-4, py::arg("vol_upper") = 5.0, py::arg("tol") = 1e-5
     );
 
-    // --- Add Bindings for Debugging Comparison ---
-
-    // Bind compute_fp
-    m.def("compute_fp", &compute_fp, "C++ implementation of compute_fp",
-          py::arg("t"), py::arg("mu"), py::arg("div_times"), py::arg("div_props"));
-
-    // Bind compute_DT
-    m.def("compute_DT", &compute_DT, "C++ implementation of compute_DT",
-          py::arg("t"), py::arg("T"), py::arg("mu"),
-          py::arg("div_times"), py::arg("div_props"), py::arg("div_cash"));
-
     // Bind the single option pricer
-    m.def("ska_model_option", &ska_model_option_cpp,
-          "C++ implementation of SKA binomial tree pricer",
+    m.def("ska_model_option_native", &ska_model_option_native_cpp,
+          "C++ implementation of SKA binomial tree pricer (Native version for Volatility)",
           py::arg("S0"), py::arg("r"), py::arg("q"), py::arg("sigma"), py::arg("T"), py::arg("K"),
           py::arg("option_type"), // expects "c" or "p"
           py::arg("div_times"), py::arg("div_cash"), py::arg("div_prop"),
@@ -51,7 +76,7 @@ PYBIND11_MODULE(implied_vol_cpp_lib, m) {
            py::arg("vol_upper") = 5.0,
            py::arg("tol") = 1e-5
     );
-    // --- End Bindings for Debugging Comparison ---
+     /////////////////////////////////////////////////////////////////
 
 
 #ifdef VERSION_INFO

@@ -9,18 +9,18 @@
 // Forward declarations 
 
 // Helper function: compute_fp
-double compute_fp(double t, double mu,
+double compute_fp_native(double t, double mu,
                   const std::vector<double>& div_times,
                   const std::vector<double>& div_props);
 
 // Helper function: compute_DT
-double compute_DT(double t, double T, double mu,
+double compute_DT_native(double t, double T, double mu,
                   const std::vector<double>& div_times,
                   const std::vector<double>& div_props,
                   const std::vector<double>& div_cash);
 
 // Core American Option Pricer using SKA method
-double ska_model_option_cpp(
+double ska_model_option_native_cpp(
     double S0, double r, double q, double sigma, double T, double K,
     const std::string& option_type_str, // Use string "c" or "p"
     const std::vector<double>& div_times,
