@@ -109,6 +109,54 @@ double compute_DT(double t, double T, double mu,
 
 // --- Core Option Pricer ---
 
+// --- Helper function for Zero-Volatility Price ---
+// (Moved logic from inside ska_model_option_cpp)
+double calculate_zero_vol_price(
+    double S0, double r, double q, double T, double K,
+    const std::string& option_type_str,
+    const std::vector<double>& div_times,
+    const std::vector<double>& div_cash,
+    const std::vector<double>& div_prop)
+{
+     if (T <= 0) { // Handle T=0 case within helper too
+        double payoff = 0.0;
+        if (option_type_str == "c") { payoff = std::max(S0 - K, 0.0); }
+        else { payoff = std::max(K - S0, 0.0); }
+        return payoff;
+     }
+
+     double mu_calc = r - q;
+     double fp_maturity = compute_fp(T, mu_calc, div_times, div_prop);
+     if (std::isnan(fp_maturity)) return std::numeric_limits<double>::quiet_NaN();
+
+     double sum_div_value = 0.0;
+     size_t n_div_fwd = div_times.size();
+     for (size_t j = 0; j < n_div_fwd; ++j) {
+         if (div_times[j] > 0 && div_times[j] <= T) {
+             double fp_j = compute_fp(div_times[j], mu_calc, div_times, div_prop);
+             if (fp_j != 0.0 && !std::isnan(fp_j)) {
+                 sum_div_value += div_cash[j] / fp_j;
+             } else {
+                 return std::numeric_limits<double>::quiet_NaN(); // Propagate failure
+             }
+         }
+     }
+
+     double forward_price = fp_maturity * (S0 - sum_div_value);
+     if (std::isnan(forward_price)) return std::numeric_limits<double>::quiet_NaN();
+
+
+     double payoff_at_maturity = 0.0;
+     if (option_type_str == "c") {
+         payoff_at_maturity = std::max(forward_price - K, 0.0);
+     } else { // 'p'
+         payoff_at_maturity = std::max(K - forward_price, 0.0);
+     }
+
+     return payoff_at_maturity * std::exp(-r * T);
+}
+
+
 double ska_model_option_cpp(
     double S0, double r, double q, double sigma, double T, double K,
     const std::string& option_type_str, // Keep original name and signature
@@ -119,76 +167,60 @@ double ska_model_option_cpp(
 {
     // Basic checks
      if (T <= 0.0) {
-        double payoff = 0.0;
-        if (option_type_str == "c") { payoff = std::max(S0 - K, 0.0); }
-        else if (option_type_str == "p") { payoff = std::max(K - S0, 0.0); }
-        else { throw std::invalid_argument("Invalid option type. Use 'c' or 'p'."); }
-        return payoff; // No discounting needed
+        // Use helper for consistency
+        return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_props);
      }
      if (N <= 0) {
         throw std::invalid_argument("Number of steps N must be positive.");
      }
-     // Add check for sigma <= 0
-     if (sigma <= 0.0) {
-         // Use the zero-volatility logic (calculate forward, payoff, discount)
-         double mu_calc = r - q;
-         double fp_maturity = compute_fp(T, mu_calc, div_times, div_props);
-         if (std::isnan(fp_maturity)) return std::numeric_limits<double>::quiet_NaN();
 
-         double sum_div_value = 0.0;
-         size_t n_div_fwd = div_times.size();
-         for (size_t j = 0; j < n_div_fwd; ++j) {
-             if (div_times[j] > 0 && div_times[j] <= T) { // Only divs up to maturity, skip t=0
-                 double fp_j = compute_fp(div_times[j], mu_calc, div_times, div_props);
-                 if (fp_j != 0.0 && !std::isnan(fp_j)) {
-                     sum_div_value += div_cash[j] / fp_j;
-                 } else { return std::numeric_limits<double>::quiet_NaN(); }
-             }
-         }
-         double forward_price = fp_maturity * (S0 - sum_div_value);
-         if (std::isnan(forward_price)) return std::numeric_limits<double>::quiet_NaN();
-
-         double payoff_at_maturity = 0.0;
-         if (option_type_str == "c") { payoff_at_maturity = std::max(forward_price - K, 0.0); }
-         else { payoff_at_maturity = std::max(K - forward_price, 0.0); }
-         return payoff_at_maturity * std::exp(-r * T);
-     }
+    // --- Combine sigma <= 0 and near-zero check ---
+    // Define a threshold below which we treat sigma as effectively zero
+    const double EFFECTIVE_ZERO_SIGMA_TOL = 1e-9; // Adjust if needed
+    if (sigma < EFFECTIVE_ZERO_SIGMA_TOL) {
+         // Directly return the zero-volatility price calculation
+         return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_props);
+    }
+    // --- End combined check ---
 
 
-    // --- Start of logic adapted from pricer.cpp ---
+    // --- Start of logic for sigma > EFFECTIVE_ZERO_SIGMA_TOL ---
     double mu = r - q;
-    double dt = T / static_cast<double>(N); // Ensure floating point division
+    double dt = T / static_cast<double>(N);
     double sigma_sqrt_dt = sigma * std::sqrt(dt); // Calculate once
     double u = std::exp(sigma_sqrt_dt);
     double d = 1.0 / u;
     double u_minus_d = u - d; // Calculate once
 
-    // Check if u and d are too close (potential division by zero in p)
-    if (std::abs(u_minus_d) < std::numeric_limits<double>::epsilon() * 100) { // Added tolerance multiplier
-        // This case should be caught by sigma <= 0 check above, but as fallback:
-        // Recalculate zero-vol price
-         double mu_calc = r - q;
-         double fp_maturity = compute_fp(T, mu_calc, div_times, div_props);
-         if (std::isnan(fp_maturity)) return std::numeric_limits<double>::quiet_NaN();
-         double sum_div_value = 0.0;
-         size_t n_div_fwd = div_times.size();
-         for (size_t j = 0; j < n_div_fwd; ++j) {
-             if (div_times[j] > 0 && div_times[j] <= T) {
-                 double fp_j = compute_fp(div_times[j], mu_calc, div_times, div_props);
-                 if (fp_j != 0.0 && !std::isnan(fp_j)) { sum_div_value += div_cash[j] / fp_j; }
-                 else { return std::numeric_limits<double>::quiet_NaN(); }
-             }
-         }
-         double forward_price = fp_maturity * (S0 - sum_div_value);
-         if (std::isnan(forward_price)) return std::numeric_limits<double>::quiet_NaN();
-         double payoff_at_maturity = 0.0;
-         if (option_type_str == "c") { payoff_at_maturity = std::max(forward_price - K, 0.0); }
-         else { payoff_at_maturity = std::max(K - forward_price, 0.0); }
-         return payoff_at_maturity * std::exp(-r * T);
+    // Check if u and d are too close (should be redundant now but keep as safety)
+    // Use a slightly larger tolerance here just in case exp() causes issues
+    if (std::abs(u_minus_d) < std::numeric_limits<double>::epsilon() * 100) {
+        // Fallback to zero-vol price if somehow sigma wasn't caught but u/d are identical
+        return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_props);
     }
 
     double p = (std::exp(mu * dt) - d) / u_minus_d;
     double discount = std::exp(-r * dt);
+
+    // --- Reinstate p-bounds check ---
+    // Since we now only enter this block if sigma is sufficiently > 0,
+    // p should ideally be within [0, 1]. If not, it indicates a potential
+    // issue with large N or extreme parameters, so returning NaN is appropriate.
+    const double P_TOL = 1e-10;
+    if (p < -P_TOL || p > 1.0 + P_TOL) {
+         std::cerr << "ERROR: Probability p=" << p << " significantly outside [0, 1] in ska_model_option_cpp.\n"
+                   << "  sigma=" << sigma << ", T=" << T << ", N=" << N << ", r=" << r << ", q=" << q << "\n"
+                   << "  u=" << std::fixed << std::setprecision(15) << u
+                   << ", d=" << d << ", exp(mu*dt)=" << std::exp(mu * dt) << std::endl;
+         return std::numeric_limits<double>::quiet_NaN();
+    }
+    // Clamp p if it's slightly outside [0, 1] due to numerical noise
+    // This clamping is important for stability if p is e.g. 1.00000000001 or -0.00000000001
+    if (p < 0.0 || p > 1.0) {
+        // std::cerr << "WARNING: Clamping p=" << p << " to [0, 1] range." << std::endl;
+        p = std::max(0.0, std::min(1.0, p));
+    }
+    // --- End reinstate p-bounds check ---
 
     // --- NO explicit arbitrage check (d >= exp_mu_dt || exp_mu_dt >= u) here ---
     // --- NO explicit p-bounds check here ---
@@ -329,10 +361,10 @@ double implied_volatility_cpp(
         double model_price = ska_model_option_cpp(S0, r, q, sigma, T, K, option_type,
                                                   div_times, div_cash, div_prop, N);
         // Optional Debug Print inside Objective
-        // if (sigma == vol_lower || sigma == vol_upper) {
-        //     std::cerr << std::fixed << std::setprecision(8)
-        //               << "    sigma=" << sigma << ", model_price=" << model_price << std::endl;
-        // }
+        if (sigma == vol_lower || sigma == vol_upper) {
+            std::cerr << std::fixed << std::setprecision(8)
+                      << "    sigma=" << sigma << ", model_price=" << model_price << std::endl;
+        }
         if (std::isnan(model_price)) {
              return std::numeric_limits<double>::quiet_NaN(); // Propagate NaN
         }
@@ -340,18 +372,18 @@ double implied_volatility_cpp(
     };
 
     // Debug Print before calling objective
-    // std::cerr << "IV Calc: Target=" << target_price << ", S0=" << S0 << ", K=" << K
-    //           << ", T=" << T << ", Type=" << option_type << ", N=" << N
-    //           << ", Bounds=[" << vol_lower << ", " << vol_upper << "]" << std::endl;
+    std::cerr << "IV Calc: Target=" << target_price << ", S0=" << S0 << ", K=" << K
+              << ", T=" << T << ", Type=" << option_type << ", N=" << N
+              << ", Bounds=[" << vol_lower << ", " << vol_upper << "]" << std::endl;
 
     double f_lower = objective_func(vol_lower);
     double f_upper = objective_func(vol_upper);
 
     // Debug Print after calling objective
-    // std::cerr << std::fixed << std::setprecision(8)
-    //           << "  Price(low_vol) = " << (f_lower + target_price) << ", f_lower = " << f_lower << std::endl;
-    // std::cerr << std::fixed << std::setprecision(8)
-    //           << "  Price(high_vol)= " << (f_upper + target_price) << ", f_upper = " << f_upper << std::endl;
+    std::cerr << std::fixed << std::setprecision(8)
+              << "  Price(low_vol) = " << (f_lower + target_price) << ", f_lower = " << f_lower << std::endl;
+    std::cerr << std::fixed << std::setprecision(8)
+              << "  Price(high_vol)= " << (f_upper + target_price) << ", f_upper = " << f_upper << std::endl;
 
 
     if (std::isnan(f_lower) || std::isnan(f_upper)) {
