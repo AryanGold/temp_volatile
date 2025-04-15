@@ -1,2 +1,35 @@
-build/*
-venv/*
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.pyd
+*.so
+*.dll
+*.lib
+*.exp
+*.obj
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+.*/ # If using other venv names like .venv
+
+# CMake cache/temp files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile # If using Makefiles generator
+*.make # If using Makefiles generator
+install_manifest.txt
+CTestTestfile.cmake
+
+# IDE specific files (optional)
+.vscode/
+.idea/
+*.suo
+*.user

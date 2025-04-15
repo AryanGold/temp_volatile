@@ -235,7 +235,7 @@ double ska_model_option_cpp(
         tilde_S[i][0] = tilde_S[i-1][0] * d;
         // Upward moves
         for (int j = 1; j <= i; ++j) {
-            if (std::isnan(tilde_S[i-1][j-1])) return std::numeric_limits<double>::quiet_NaN();
+            //if (std::isnan(tilde_S[i-1][j-1])) return std::numeric_limits<double>::quiet_NaN();
             tilde_S[i][j] = tilde_S[i-1][j-1] * u;
         }
 

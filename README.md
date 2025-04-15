@@ -2,6 +2,8 @@
 
 This project provides a high-performance C++ implementation for calculating American option prices using a binomial tree with the SKA discrete dividend adjustment method, and finding the corresponding implied volatility. The calculation is parallelized using a thread pool for significant speedups when calculating volatilities for multiple options. The C++ code is wrapped using pybind11 for easy use as a Python library.
 
+**NaN** Results: NaN results can occur, especially if the target price is very close to the theoretical minimum/maximum price the model can produce for the given volatility bounds, potentially due to numerical limitations or "flat spots" in the price function near zero volatility (as observed during debugging).
+
 ## Features
 
 *   C++ implementation of the SKA binomial tree for American options with discrete cash and proportional dividends.
@@ -75,3 +77,27 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 # Build using CMake
 cmake --build . --config Release --parallel <num_jobs> # e.g., --parallel 4
 ```
+
+### Building on Windows MSYS2 Envrionment
+```
+cd implied_vol_cpp
+rm -rf build
+clear && python setup.py build_ext --inplace
+clear && python ./python/example.py
+```
+
+### Test
+
+How to use library see "python/example.py".
+
+If need detailed debug then you can run Step By Step comparator between Python and C++ versions:
+
+1. In file "brent.hpp' set `enable_brentq_debug = true`
+
+2. In file "implied_vol.cpp" uncomment `#define EXTRA_DEBUGS`
+
+3. Rebuild library:
+`clear && python setup.py build_ext --inplace`
+
+4. Run debug script:
+` python ./python/test_stepBYstep.py`
