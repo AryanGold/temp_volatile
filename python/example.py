@@ -2,13 +2,10 @@ import numpy as np
 import time
 import sys
 from pathlib import Path
+import math # For isnan
 
 # Add the build directory to sys.path if running directly after build
-# This is usually where the .pyd/.so file ends up before installation
-# Adjust the path based on your build output structure (e.g., build/lib.win-amd64-...)
-# For editable installs (pip install -e .), this might not be needed.
 try:
-    # Assuming you built in-place or installed it
     import implied_vol_cpp_lib
 except ImportError:
     print("Trying to add build directory to path...")
@@ -27,34 +24,48 @@ except ImportError:
         sys.exit(1)
 
 
-# --- Test Data Generation ---
-n_options = 1##000 # Increase for performance testing
-target_prices = np.linspace(9.5, 10.5, n_options)
-S_arr = np.full(n_options, 100.0)
-r_arr = np.full(n_options, 0.05)
-q_arr = np.full(n_options, 0.03) # Continuous dividend yield for mu=r-q
-T_arr = np.full(n_options, 1.0)
-K_arr = np.linspace(90.0, 110.0, n_options) # Vary strikes
+# =============================================================================
+# --- Main Test Data Generation ---
+# =============================================================================
+n_options = 10 # Number of options to test
+print(f"--- Setting up {n_options} options for IV calculation ---")
 
-# Generate alternating call/put types
-option_types_arr = np.array(['c' if i % 2 == 0 else 'p' for i in range(n_options)])
+# --- Define parameters consistently ---
+S_val = 100.0
+r_val = 0.05
+q_val = 0.03
+T_val = 1.0
+N_val = 100 # Number of steps for the C++ pricer
 
-# Use a consistent initial guess or vary it
-# iv_initial_guess = np.full(n_options, 0.25)
-iv_initial_guess = np.linspace(0.15, 0.35, n_options)
+S_arr = np.full(n_options, S_val)
+r_arr = np.full(n_options, r_val)
+q_arr = np.full(n_options, q_val)
+T_arr = np.full(n_options, T_val)
+# Strikes slightly around the money - more likely to have prices in a solvable range
+K_arr = np.linspace(95.0, 105.0, n_options)
+# Target prices - choose a range that might be plausible for these strikes/params
+# (Note: Some combinations might still be unsolvable if target price is outside model bounds)
+target_prices = np.linspace(5.0, 15.0, n_options)
+# Alternating option types
+option_types_arr = np.array(['c', 'p'] * (n_options // 2 + 1))[:n_options]
+# Use a constant initial guess for simplicity
+iv_initial_guess = np.full(n_options, 0.25)
 
 # Dividend schedule (common for all options):
-div_times = np.array([0.25, 0.55, 0.85]) # Example dividend times
-div_prop = np.array([0.01, 0.0, 0.015])  # Example proportional dividends (use 0 for cash only)
-div_cash = np.array([0.5, 1.0, 0.75])   # Example cash dividends
+div_times = np.array([0.25, 0.55, 0.85])
+div_prop = np.array([0.01, 0.0, 0.015])
+div_cash = np.array([0.5, 1.0, 0.75])
+# Convert dividends to lists for C++ call
+div_times_list = div_times.tolist()
+div_prop_list = div_prop.tolist()
+div_cash_list = div_cash.tolist()
 
-# Binomial Tree Parameters
-N = 100 # Number of steps in the binomial tree
+# Binomial Tree Parameters for IV solver
 vol_lower = 1e-4
 vol_upper = 5.0
-tol = 1e-5
+tol = 1e-5 # Standard tolerance
 
-# --- Convert to lists for C++ function (pybind11 handles conversion) ---
+# --- Convert inputs to lists for C++ function ---
 target_prices_list = target_prices.tolist()
 S_arr_list = S_arr.tolist()
 r_arr_list = r_arr.tolist()
@@ -63,12 +74,14 @@ T_arr_list = T_arr.tolist()
 K_arr_list = K_arr.tolist()
 option_types_list = option_types_arr.tolist()
 iv_initial_guess_list = iv_initial_guess.tolist()
-div_times_list = div_times.tolist()
-div_prop_list = div_prop.tolist()
-div_cash_list = div_cash.tolist()
 
-# --- Run the C++ Implementation ---
-print(f"Calculating {n_options} implied volatilities using C++ library (N={N})...")
+
+# =============================================================================
+# --- Run the C++ Implied Volatility Calculation ---
+# =============================================================================
+print(f"\nCalculating {n_options} implied volatilities using C++ library (N={N_val})...")
+# --- Ensure C++ debug prints are commented out for clean output ---
+
 start_time = time.time()
 
 ivs_cpp = implied_vol_cpp_lib.vectorized_implied_volatility_parallel(
@@ -83,7 +96,7 @@ ivs_cpp = implied_vol_cpp_lib.vectorized_implied_volatility_parallel(
     div_times_list,
     div_prop_list,
     div_cash_list,
-    N,
+    N_val, # Use consistent N
     vol_lower=vol_lower,
     vol_upper=vol_upper,
     tol=tol
@@ -95,36 +108,22 @@ print(f"C++ calculation finished in {end_time - start_time:.4f} seconds.")
 # Convert result back to NumPy array for easier handling
 ivs_cpp_np = np.array(ivs_cpp)
 
-print("\nSample Implied Volatilities (C++):")
-print(ivs_cpp_np[:10]) # Print the first 10 results
+# =============================================================================
+# --- Display Results ---
+# =============================================================================
+print("\nResults:")
+# Header - Adjust spacing as needed
+print(f"{'Option':<6} {'Type':<4} {'K':<7} {'Target P':<10} {'Calc IV':<12}")
+print("-" * 42) # Adjust separator length
+for i in range(n_options):
+    # Format NaN nicely for output
+    iv_str = f"{ivs_cpp_np[i]:<12.6f}" if not np.isnan(ivs_cpp_np[i]) else f"{'NaN':<12}"
+    print(f"{i:<6} {option_types_arr[i]:<4} {K_arr[i]:<7.2f} {target_prices[i]:<10.4f} {iv_str}")
+
 print(f"\nNumber of NaNs (failed calculations): {np.isnan(ivs_cpp_np).sum()}")
 
-
-# --- Optional: Compare with original Python (if available and feasible time-wise) ---
-# Note: Running the original Python for 1000 options might be very slow.
-# You might want to run it for a smaller n_options for verification.
-
-# from Input import vectorized_implied_volatility as vectorized_implied_volatility_py
-# from Input import implied_volatility # Need this too
-
-# print("\nCalculating with original Python (this might be slow)...")
-# start_time_py = time.time()
-# ivs_py = vectorized_implied_volatility_py(
-#     target_prices, S_arr, r_arr, q_arr, T_arr, K_arr, option_types_arr,
-#     iv_initial_guess, div_times, div_prop, div_cash, N,
-#     vol_lower=vol_lower, vol_upper=vol_upper, tol=tol
-# )
-# end_time_py = time.time()
-# print(f"Python calculation finished in {end_time_py - start_time_py:.4f} seconds.")
-# print("\nSample Implied Volatilities (Python):")
-# print(ivs_py[:10])
-# print(f"\nDifference (max abs): {np.nanmax(np.abs(ivs_cpp_np - ivs_py)) if len(ivs_py)>0 else 'N/A'}")
-
-# --- Test Single Pricer Call (Optional) ---
-print("\nTesting single C++ pricer call:")
-test_sigma = 0.25
-price = implied_vol_cpp_lib.ska_model_option(
-    S_arr_list[0], r_arr_list[0], q_arr_list[0], test_sigma, T_arr_list[0], K_arr_list[0],
-    option_types_list[0], div_times_list, div_cash_list, div_prop_list, N
-)
-print(f"Price for option 0 with sigma={test_sigma}: {price}")
+# Optional: You could add a check here to see if the number of NaNs is unexpected.
+if np.isnan(ivs_cpp_np).any():
+    print("\nNote: Some options resulted in NaN. This might be because the target price")
+    print("      is outside the possible range for the model with vols between")
+    print(f"      {vol_lower} and {vol_upper}, or other numerical issues occurred.")

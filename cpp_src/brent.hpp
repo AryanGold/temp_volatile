@@ -11,11 +11,11 @@
 
 namespace RootFinding {
 
-// Basic Brent's method implementation with debugging
+// Basic Brent's method implementation with debugging (now disabled by default)
 template <typename Func>
 double brentq(Func f, double xa, double xb, double tol = 1e-5, int max_iter = 100) {
     // --- Debug Setup ---
-    const bool enable_brentq_debug = true; // Set to false to disable debug prints
+    const bool enable_brentq_debug = false; // Set to false to disable debug prints
     auto print_debug = [&](const std::string& msg) {
         if (enable_brentq_debug) {
             std::cerr << "  [Brentq Debug] " << msg << std::endl;
@@ -53,9 +53,9 @@ double brentq(Func f, double xa, double xb, double tol = 1e-5, int max_iter = 10
 
     if (fa * fb >= 0.0) {
         print_debug("ERROR: Root not bracketed at start (fa * fb >= 0).");
-        // Check tolerance near bounds
-        if (std::abs(fa) < tol) { print_debug("Close match at a."); return a; }
-        if (std::abs(fb) < tol) { print_debug("Close match at b."); return b; }
+        // Check tolerance near bounds (relative tolerance check moved to caller)
+        if (std::abs(fa) < tol) { print_debug("Close match at a."); return a; } // Use absolute tol here
+        if (std::abs(fb) < tol) { print_debug("Close match at b."); return b; } // Use absolute tol here
         return std::numeric_limits<double>::quiet_NaN();
     }
 
@@ -157,20 +157,19 @@ double brentq(Func f, double xa, double xb, double tol = 1e-5, int max_iter = 10
 
         if (std::isnan(fb)) {
             print_debug("ERROR: f(b) returned NaN during iteration.");
+            // --- Add specific warning for NaN during iteration ---
+            std::cerr << "WARNING: brentq failed because objective function returned NaN for sigma="
+                      << std::fixed << std::setprecision(8) << b << std::endl;
+            // --- End specific warning ---
             return std::numeric_limits<double>::quiet_NaN();
         }
 
         // Update 'c' and 'fc' based on the sign of fb
-        // Standard Brent: if f(b) and f(c) have different signs, the root is between b and c.
-        // Otherwise, the root must be between a and b (since f(a) and f(b) must have different signs
-        // if f(b) and f(c) have the same sign, because f(a) and f(c) initially had the same sign).
-        // So, if f(b)*f(c) >= 0, set c=a, fc=fa.
         if (fb * fc >= 0.0) {
              print_debug("Updating c=a because fb*fc >= 0.");
              c = a;
              fc = fa;
         }
-        // If fb*fc < 0, c and fc remain unchanged (bracket is [b, c])
 
         // Ensure |f(a)| >= |f(b)| for the next iteration's interpolation logic
         if (std::abs(fa) < std::abs(fb)) {
@@ -178,12 +177,15 @@ double brentq(Func f, double xa, double xb, double tol = 1e-5, int max_iter = 10
             std::swap(a, b);
             std::swap(fa, fb);
         }
-        // Update d and e for the next iteration (d was the step just taken, e was the one before that)
-        // Note: d and e were already updated based on interpolation/bisection decision
     }
 
     // Max iterations reached
     print_debug("ERROR: Maximum iterations (" + std::to_string(max_iter) + ") reached without convergence.");
+    // --- Add specific warning for max iterations ---
+    std::cerr << "WARNING: brentq failed to converge within " << max_iter << " iterations. "
+              << "Final bracket [" << std::fixed << std::setprecision(8) << std::min(a,b) << ", " << std::max(a,b)
+              << "], f(b)=" << fb << ". Possible flat spot or tolerance issue." << std::endl;
+    // --- End specific warning ---
     return std::numeric_limits<double>::quiet_NaN();
 }
 

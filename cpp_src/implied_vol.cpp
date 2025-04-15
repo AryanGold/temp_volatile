@@ -16,6 +16,9 @@
 #include <iostream>
 #include <iomanip> // For std::fixed, std::setprecision
 
+// Uncomment for show details trace info for Solver
+//#define EXTRA_DEBUGS
+
 // --- Helper Function Implementations ---
 
 double compute_fp(double t, double mu,
@@ -317,73 +320,80 @@ double implied_volatility_cpp(
     auto objective_func = [&](double sigma) {
         double model_price = ska_model_option_cpp(S0, r, q, sigma, T, K, option_type,
                                                   div_times, div_cash, div_prop, N);
-        // --- Ensure UNCOMMENTED ---
+
+        #ifdef EXTRA_DEBUGS
         if (sigma == vol_lower || sigma == vol_upper) { // Only print for bounds to reduce noise
             std::cerr << std::fixed << std::setprecision(8)
                       << "    [Objective] sigma=" << sigma << ", model_price=" << model_price << std::endl;
         }
-        // --- End Ensure UNCOMMENTED ---
+        #endif
+
         if (std::isnan(model_price)) {
              return std::numeric_limits<double>::quiet_NaN(); // Propagate NaN
         }
         return model_price - target_price;
     };
 
-    // --- Ensure UNCOMMENTED ---
+    #ifdef EXTRA_DEBUGS
     std::cerr << "IV Calc: Target=" << target_price << ", S0=" << S0 << ", K=" << K
               << ", T=" << T << ", Type=" << option_type << ", N=" << N
               << ", Bounds=[" << vol_lower << ", " << vol_upper << "]" << std::endl;
-    // --- End Ensure UNCOMMENTED ---
+    #endif
 
     double f_lower = objective_func(vol_lower);
     double f_upper = objective_func(vol_upper);
 
-    // --- Ensure UNCOMMENTED ---
+    #ifdef EXTRA_DEBUGS
     std::cerr << std::fixed << std::setprecision(8)
               << "  Price(low_vol) = " << (f_lower + target_price) << ", f_lower = " << f_lower << std::endl;
     std::cerr << std::fixed << std::setprecision(8)
               << "  Price(high_vol)= " << (f_upper + target_price) << ", f_upper = " << f_upper << std::endl;
-    // --- End Ensure UNCOMMENTED ---
+    #endif
 
 
     if (std::isnan(f_lower) || std::isnan(f_upper)) {
-        // --- Ensure UNCOMMENTED ---
+        #ifdef EXTRA_DEBUGS
         std::cerr << "  -> Pricing failed at bounds (NaN detected), returning NaN." << std::endl;
-        // --- End Ensure UNCOMMENTED ---
+        #endif
         return std::numeric_limits<double>::quiet_NaN();
     }
 
     if (f_lower * f_upper >= 0) {
-        // --- Ensure UNCOMMENTED ---
+        #ifdef EXTRA_DEBUGS
         std::cerr << "  -> Root not bracketed (f_lower * f_upper = " << (f_lower * f_upper) << "), checking tolerance..." << std::endl;
-        // --- End Ensure UNCOMMENTED ---
-         if (target_price > 1e-9 && std::abs(f_lower) < tol * target_price) {
-             std::cerr << "     -> Approx match at lower bound." << std::endl;
-             return vol_lower;
-         }
-         if (target_price > 1e-9 && std::abs(f_upper) < tol * target_price) {
-             std::cerr << "     -> Approx match at upper bound." << std::endl;
-             return vol_upper;
-         }
-        // --- Ensure UNCOMMENTED ---
+        #endif
+        if (target_price > 1e-9 && std::abs(f_lower) < tol * target_price) {
+            #ifdef EXTRA_DEBUGS
+            std::cerr << "     -> Approx match at lower bound." << std::endl;
+            #endif
+            return vol_lower;
+        }
+        if (target_price > 1e-9 && std::abs(f_upper) < tol * target_price) {
+            #ifdef EXTRA_DEBUGS
+            std::cerr << "     -> Approx match at upper bound." << std::endl;
+            #endif
+            return vol_upper;
+        }
+        #ifdef EXTRA_DEBUGS
         std::cerr << "     -> No match within tolerance, returning NaN." << std::endl;
-        // --- End Ensure UNCOMMENTED ---
         return std::numeric_limits<double>::quiet_NaN();
+        #endif
     }
 
     // If we reach here, root is bracketed
     try {
-        // --- Ensure UNCOMMENTED ---
+        #ifdef EXTRA_DEBUGS
         std::cerr << "  -> Root bracketed. Calling brentq..." << std::endl;
-        // --- End Ensure UNCOMMENTED ---
+        #endif
         // Make sure brent.hpp still has its internal debug prints enabled if needed
         double result = RootFinding::brentq(objective_func, vol_lower, vol_upper, tol, 100);
-        // --- Ensure UNCOMMENTED ---
-        std::cerr << "  -> brentq result: " << result << std::endl;
+
         if (std::isnan(result)) {
-             std::cerr << "  -> brentq returned NaN." << std::endl;
+             // This message will appear *after* the specific warning from brent.hpp
+             std::cerr << "  Note: brentq solver returned NaN for Target=" << target_price
+                       << ", K=" << K << ", Type=" << option_type << std::endl;
         }
-        // --- End Ensure UNCOMMENTED ---
+
         return result;
     } catch (const std::exception& e) {
         std::cerr << "  -> Exception during brentq: " << e.what() << std::endl;
