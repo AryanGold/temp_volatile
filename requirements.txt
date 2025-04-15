@@ -1,0 +1,5 @@
+numpy
+pybind11>=2.6
+setuptools>=42
+wheel
+cmake>=3.12
