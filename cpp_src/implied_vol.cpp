@@ -159,187 +159,145 @@ double calculate_zero_vol_price(
 
 double ska_model_option_cpp(
     double S0, double r, double q, double sigma, double T, double K,
-    const std::string& option_type_str, // Keep original name and signature
+    const std::string& option_type_str,
     const std::vector<double>& div_times,
     const std::vector<double>& div_cash,
-    const std::vector<double>& div_props,
-    int N) // N is passed explicitly, no default needed here
+    const std::vector<double>& div_prop,
+    int N)
 {
     // Basic checks
-     if (T <= 0.0) {
-        // Use helper for consistency
-        return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_props);
-     }
-     if (N <= 0) {
+    if (T <= 0.0) {
+        return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_prop);
+    }
+    if (N <= 0) {
         throw std::invalid_argument("Number of steps N must be positive.");
-     }
+    }
 
-    // --- Combine sigma <= 0 and near-zero check ---
-    // Define a threshold below which we treat sigma as effectively zero
-    const double EFFECTIVE_ZERO_SIGMA_TOL = 1e-9; // Adjust if needed
+    // --- Combined sigma <= 0 and near-zero check ---
+    const double EFFECTIVE_ZERO_SIGMA_TOL = 1e-9;
     if (sigma < EFFECTIVE_ZERO_SIGMA_TOL) {
-         // Directly return the zero-volatility price calculation
-         return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_props);
+        return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_prop);
     }
     // --- End combined check ---
-
 
     // --- Start of logic for sigma > EFFECTIVE_ZERO_SIGMA_TOL ---
     double mu = r - q;
     double dt = T / static_cast<double>(N);
-    double sigma_sqrt_dt = sigma * std::sqrt(dt); // Calculate once
+    double sigma_sqrt_dt = sigma * std::sqrt(dt);
     double u = std::exp(sigma_sqrt_dt);
     double d = 1.0 / u;
-    double u_minus_d = u - d; // Calculate once
+    double u_minus_d = u - d;
 
-    // Check if u and d are too close (should be redundant now but keep as safety)
-    // Use a slightly larger tolerance here just in case exp() causes issues
+    // Fallback check if u and d are too close
     if (std::abs(u_minus_d) < std::numeric_limits<double>::epsilon() * 100) {
-        // Fallback to zero-vol price if somehow sigma wasn't caught but u/d are identical
-        return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_props);
+        return calculate_zero_vol_price(S0, r, q, T, K, option_type_str, div_times, div_cash, div_prop);
     }
 
     double p = (std::exp(mu * dt) - d) / u_minus_d;
     double discount = std::exp(-r * dt);
 
-    // --- Reinstate p-bounds check ---
-    // Since we now only enter this block if sigma is sufficiently > 0,
-    // p should ideally be within [0, 1]. If not, it indicates a potential
-    // issue with large N or extreme parameters, so returning NaN is appropriate.
-    const double P_TOL = 1e-10;
-    if (p < -P_TOL || p > 1.0 + P_TOL) {
-         std::cerr << "ERROR: Probability p=" << p << " significantly outside [0, 1] in ska_model_option_cpp.\n"
-                   << "  sigma=" << sigma << ", T=" << T << ", N=" << N << ", r=" << r << ", q=" << q << "\n"
-                   << "  u=" << std::fixed << std::setprecision(15) << u
-                   << ", d=" << d << ", exp(mu*dt)=" << std::exp(mu * dt) << std::endl;
-         return std::numeric_limits<double>::quiet_NaN();
-    }
-    // Clamp p if it's slightly outside [0, 1] due to numerical noise
-    // This clamping is important for stability if p is e.g. 1.00000000001 or -0.00000000001
+    // --- Clamp p (important for stability) ---
     if (p < 0.0 || p > 1.0) {
-        // std::cerr << "WARNING: Clamping p=" << p << " to [0, 1] range." << std::endl;
         p = std::max(0.0, std::min(1.0, p));
     }
-    // --- End reinstate p-bounds check ---
+    // --- End clamp p ---
 
-    // --- NO explicit arbitrage check (d >= exp_mu_dt || exp_mu_dt >= u) here ---
-    // --- NO explicit p-bounds check here ---
-
-    // Compute D_t (dividend shifts) at each time node.
-    std::vector<double> D_t(N + 1, 0.0);
-    for (int i = 0; i <= N; ++i) {
-        double t_i = static_cast<double>(i) * dt; // Calculate time directly
-        D_t[i] = compute_DT(t_i, T, mu, div_times, div_props, div_cash);
-         if (std::isnan(D_t[i])) {
-             // std::cerr << "ERROR: compute_DT returned NaN for t=" << t_i << std::endl;
-             return std::numeric_limits<double>::quiet_NaN(); // Propagate NaN
-         }
-    }
-
-    // Allocate flattened 1D array for tilde_S (dimension: (N+1) x (N+1)).
-    std::vector<double> tilde_S((N + 1) * (N + 1), 0.0);
-
-    // Initialization: at time 0, index 0.
-    tilde_S[0] = S0 - D_t[0]; // Correct 1D access
-     if (std::isnan(tilde_S[0])) { // Correct 1D access
-         // std::cerr << "ERROR: Initial tilde_S[0] is NaN (S0=" << S0 << ", D_t[0]=" << D_t[0] << ")" << std::endl;
-         return std::numeric_limits<double>::quiet_NaN();
-     }
-
-
-    // Build the binomial tree (Forward pass).
-    for (int i = 1; i <= N; ++i) {
-        // Calculate row starts for flattened array access
-        int row_start = i * (N + 1);
-        int prev_row_start = (i - 1) * (N + 1);
-
-        // Downward move for leftmost node.
-         if (std::isnan(tilde_S[prev_row_start])) return std::numeric_limits<double>::quiet_NaN(); // Correct 1D access
-        tilde_S[row_start] = tilde_S[prev_row_start] * d; // Correct 1D access
-
-        // Upward moves: nodes 1 to i.
-        for (int j = 1; j <= i; ++j) {
-             if (std::isnan(tilde_S[prev_row_start + (j - 1)])) return std::numeric_limits<double>::quiet_NaN(); // Correct 1D access
-            tilde_S[row_start + j] = tilde_S[prev_row_start + (j - 1)] * u; // Correct 1D access
-        }
-
-        // Dividend adjustment: for dividends in interval ((i-1)*dt, i*dt]
-        double t_lower = (i - 1) * dt;
-        double t_upper = i * dt;
-        for (size_t k = 0; k < div_times.size(); ++k) {
-            if (div_times[k] > t_lower && div_times[k] <= t_upper) {
-                double prop_mult = (1.0 - div_props[k]);
-                if (prop_mult < 0) { prop_mult = 0.0; } // Handle div_prop >= 1 case
-                for (int j = 0; j <= i; ++j) {
-                    tilde_S[row_start + j] *= prop_mult; // Correct 1D access
-                }
-            }
-        }
-         // Check for NaNs after adjustment
-         for (int j = 0; j <= i; ++j) {
-             if (std::isnan(tilde_S[row_start + j])) { // Correct 1D access
-                 // std::cerr << "ERROR: NaN detected in tilde_S at index " << (row_start + j) << " after div adjustment." << std::endl;
-                 return std::numeric_limits<double>::quiet_NaN();
-             }
-         }
-    }
-
-    // Backward induction.
-    std::vector<double> V((N + 1) * (N + 1), 0.0); // Option values (flattened)
-    double K_T = K - D_t[N]; // Adjusted strike at maturity
-     if (std::isnan(K_T)) return std::numeric_limits<double>::quiet_NaN(); // NaN check
-
-    int final_row_idx = N * (N + 1); // Index for the start of the final row
-    for (int j = 0; j <= N; ++j) {
-        double ST = tilde_S[final_row_idx + j]; // Correct 1D access
-         if (std::isnan(ST)) return std::numeric_limits<double>::quiet_NaN(); // NaN check
-        if (option_type_str == "c")
-            V[final_row_idx + j] = std::max(ST - K_T, 0.0); // Correct 1D access
-        else // "p"
-            V[final_row_idx + j] = std::max(K_T - ST, 0.0); // Correct 1D access
-    }
-
-    // Loop backwards from N-1 down to 0
-    double p_up = p; // Use p directly
+    double p_up = p;
     double p_down = 1.0 - p;
     double disc_p_up = discount * p_up;
     double disc_p_down = discount * p_down;
 
+    // Compute D_t shifts
+    std::vector<double> D_t(N + 1, 0.0);
+    for (int i = 0; i <= N; ++i) {
+        double t_i = static_cast<double>(i) * dt;
+        D_t[i] = compute_DT(t_i, T, mu, div_times, div_prop, div_cash);
+        if (std::isnan(D_t[i])) { return std::numeric_limits<double>::quiet_NaN(); }
+    }
+
+    // Use vector<vector> for the tree (original approach)
+    std::vector<std::vector<double>> tilde_S(N + 1);
+    for(int i = 0; i <= N; ++i) {
+        tilde_S[i].resize(i + 1); // Each row i has i+1 nodes
+    }
+
+    // Initialization
+    tilde_S[0][0] = S0 - D_t[0];
+    if (std::isnan(tilde_S[0][0])) { return std::numeric_limits<double>::quiet_NaN(); }
+
+    // Forward pass (using 2D indexing)
+    for (int i = 1; i <= N; ++i) {
+        // Downward move
+        if (std::isnan(tilde_S[i-1][0])) return std::numeric_limits<double>::quiet_NaN();
+        tilde_S[i][0] = tilde_S[i-1][0] * d;
+        // Upward moves
+        for (int j = 1; j <= i; ++j) {
+            if (std::isnan(tilde_S[i-1][j-1])) return std::numeric_limits<double>::quiet_NaN();
+            tilde_S[i][j] = tilde_S[i-1][j-1] * u;
+        }
+
+        // Dividend adjustment
+        double t_lower = (i - 1) * dt;
+        double t_upper = i * dt;
+        for (size_t k = 0; k < div_times.size(); ++k) {
+            if (div_times[k] > t_lower && div_times[k] <= t_upper) {
+                double prop_mult = (1.0 - div_prop[k]);
+                if (prop_mult < 0) { prop_mult = 0.0; }
+                for (int j = 0; j <= i; ++j) {
+                    tilde_S[i][j] *= prop_mult;
+                }
+            }
+        }
+         // NaN check after adjustment
+         for (int j = 0; j <= i; ++j) {
+             if (std::isnan(tilde_S[i][j])) { return std::numeric_limits<double>::quiet_NaN(); }
+         }
+    } // End forward pass
+
+    // Backward induction (using 2D indexing)
+    std::vector<std::vector<double>> V(N + 1);
+     for(int i = 0; i <= N; ++i) {
+        V[i].resize(i + 1); // Each row i has i+1 nodes
+    }
+
+    double K_T = K - D_t[N];
+    if (std::isnan(K_T)) return std::numeric_limits<double>::quiet_NaN();
+
+    // Terminal values
+    for (int j = 0; j <= N; ++j) {
+        double ST = tilde_S[N][j];
+        if (std::isnan(ST)) return std::numeric_limits<double>::quiet_NaN();
+        if (option_type_str == "c")
+            V[N][j] = std::max(ST - K_T, 0.0);
+        else // "p"
+            V[N][j] = std::max(K_T - ST, 0.0);
+    }
+
+    // Backward loop
     for (int i = N - 1; i >= 0; --i) {
-        int row_start = i * (N + 1);
-        int next_row_start = (i + 1) * (N + 1);
-        double K_t = K - D_t[i]; // Adjusted strike at time i
-         if (std::isnan(K_t)) return std::numeric_limits<double>::quiet_NaN(); // NaN check
-
+        double K_t = K - D_t[i];
+        if (std::isnan(K_t)) return std::numeric_limits<double>::quiet_NaN();
         for (int j = 0; j <= i; ++j) {
-            // Calculate continuation value
-             if (std::isnan(V[next_row_start + (j + 1)]) || std::isnan(V[next_row_start + j])) { // Correct 1D access
-                 return std::numeric_limits<double>::quiet_NaN();
-             }
-            double continuation = disc_p_up * V[next_row_start + (j + 1)] + disc_p_down * V[next_row_start + j]; // Correct 1D access
+            double v_next_up = V[i+1][j+1];
+            double v_next_down = V[i+1][j];
+             if (std::isnan(v_next_up) || std::isnan(v_next_down)) { return std::numeric_limits<double>::quiet_NaN(); }
+            double continuation = disc_p_up * v_next_up + disc_p_down * v_next_down;
 
-            // Calculate exercise value
-            double current_tilde_S = tilde_S[row_start + j]; // Correct 1D access
-             if (std::isnan(current_tilde_S)) return std::numeric_limits<double>::quiet_NaN(); // NaN check
+            double current_tilde_S = tilde_S[i][j];
+             if (std::isnan(current_tilde_S)) { return std::numeric_limits<double>::quiet_NaN(); }
             double exercise = 0.0;
             if (option_type_str == "c")
                 exercise = std::max(current_tilde_S - K_t, 0.0);
             else // "p"
                 exercise = std::max(K_t - current_tilde_S, 0.0);
 
-             if (std::isnan(continuation) || std::isnan(exercise)) { // Final check before max
-                 return std::numeric_limits<double>::quiet_NaN();
-             }
-            V[row_start + j] = std::max(exercise, continuation); // Correct 1D access
+             if (std::isnan(continuation) || std::isnan(exercise)) { return std::numeric_limits<double>::quiet_NaN(); }
+            V[i][j] = std::max(exercise, continuation);
         }
-    }
+    } // End backward loop
 
-    // Final result is at the root of the option value tree
-     if (std::isnan(V[0])) { // Correct 1D access
-         // std::cerr << "ERROR: Final option value V[0] is NaN." << std::endl;
-         return std::numeric_limits<double>::quiet_NaN();
-     }
-    return V[0]; // Correct 1D access
+    if (std::isnan(V[0][0])) { return std::numeric_limits<double>::quiet_NaN(); }
+    return V[0][0]; // Return value at root
 }
 
 // --- Implied Volatility Solver ---
@@ -357,69 +315,81 @@ double implied_volatility_cpp(
     (void)initial_guess; // Suppress unused warning
 
     auto objective_func = [&](double sigma) {
-        // Note: ska_model_option_cpp now handles sigma<=0 internally
         double model_price = ska_model_option_cpp(S0, r, q, sigma, T, K, option_type,
                                                   div_times, div_cash, div_prop, N);
-        // Optional Debug Print inside Objective
-        if (sigma == vol_lower || sigma == vol_upper) {
+        // --- Ensure UNCOMMENTED ---
+        if (sigma == vol_lower || sigma == vol_upper) { // Only print for bounds to reduce noise
             std::cerr << std::fixed << std::setprecision(8)
-                      << "    sigma=" << sigma << ", model_price=" << model_price << std::endl;
+                      << "    [Objective] sigma=" << sigma << ", model_price=" << model_price << std::endl;
         }
+        // --- End Ensure UNCOMMENTED ---
         if (std::isnan(model_price)) {
              return std::numeric_limits<double>::quiet_NaN(); // Propagate NaN
         }
         return model_price - target_price;
     };
 
-    // Debug Print before calling objective
+    // --- Ensure UNCOMMENTED ---
     std::cerr << "IV Calc: Target=" << target_price << ", S0=" << S0 << ", K=" << K
               << ", T=" << T << ", Type=" << option_type << ", N=" << N
               << ", Bounds=[" << vol_lower << ", " << vol_upper << "]" << std::endl;
+    // --- End Ensure UNCOMMENTED ---
 
     double f_lower = objective_func(vol_lower);
     double f_upper = objective_func(vol_upper);
 
-    // Debug Print after calling objective
+    // --- Ensure UNCOMMENTED ---
     std::cerr << std::fixed << std::setprecision(8)
               << "  Price(low_vol) = " << (f_lower + target_price) << ", f_lower = " << f_lower << std::endl;
     std::cerr << std::fixed << std::setprecision(8)
               << "  Price(high_vol)= " << (f_upper + target_price) << ", f_upper = " << f_upper << std::endl;
+    // --- End Ensure UNCOMMENTED ---
 
 
     if (std::isnan(f_lower) || std::isnan(f_upper)) {
-        std::cerr << "  -> Pricing failed at bounds, returning NaN." << std::endl;
+        // --- Ensure UNCOMMENTED ---
+        std::cerr << "  -> Pricing failed at bounds (NaN detected), returning NaN." << std::endl;
+        // --- End Ensure UNCOMMENTED ---
         return std::numeric_limits<double>::quiet_NaN();
     }
 
     if (f_lower * f_upper >= 0) {
-        // std::cerr << "  -> Root not bracketed (f_lower * f_upper = " << f_lower * f_upper << "), checking tolerance..." << std::endl;
+        // --- Ensure UNCOMMENTED ---
+        std::cerr << "  -> Root not bracketed (f_lower * f_upper = " << (f_lower * f_upper) << "), checking tolerance..." << std::endl;
+        // --- End Ensure UNCOMMENTED ---
          if (target_price > 1e-9 && std::abs(f_lower) < tol * target_price) {
-            //  std::cerr << "     -> Approx match at lower bound." << std::endl;
+             std::cerr << "     -> Approx match at lower bound." << std::endl;
              return vol_lower;
          }
          if (target_price > 1e-9 && std::abs(f_upper) < tol * target_price) {
-            //  std::cerr << "     -> Approx match at upper bound." << std::endl;
+             std::cerr << "     -> Approx match at upper bound." << std::endl;
              return vol_upper;
          }
+        // --- Ensure UNCOMMENTED ---
         std::cerr << "     -> No match within tolerance, returning NaN." << std::endl;
+        // --- End Ensure UNCOMMENTED ---
         return std::numeric_limits<double>::quiet_NaN();
     }
 
+    // If we reach here, root is bracketed
     try {
-        // std::cerr << "  -> Root bracketed. Calling brentq..." << std::endl;
+        // --- Ensure UNCOMMENTED ---
+        std::cerr << "  -> Root bracketed. Calling brentq..." << std::endl;
+        // --- End Ensure UNCOMMENTED ---
+        // Make sure brent.hpp still has its internal debug prints enabled if needed
         double result = RootFinding::brentq(objective_func, vol_lower, vol_upper, tol, 100);
+        // --- Ensure UNCOMMENTED ---
         std::cerr << "  -> brentq result: " << result << std::endl;
-        // Add a final check if brentq itself returns NaN
         if (std::isnan(result)) {
              std::cerr << "  -> brentq returned NaN." << std::endl;
         }
+        // --- End Ensure UNCOMMENTED ---
         return result;
     } catch (const std::exception& e) {
         std::cerr << "  -> Exception during brentq: " << e.what() << std::endl;
         return std::numeric_limits<double>::quiet_NaN();
     }
 }
-
 
 
 // --- Vectorized & Parallel Implementation ---
